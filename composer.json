@@ -1,5 +1,5 @@
 {
-    "name": "room40coding/magento2-module-mq-mysql",
+    "name": "renatocason/magento2-module-mq-mysql",
     "description": "Magento 2 Message Queue OS MySQL Broker Implementation",
     "repositories": [
         {
