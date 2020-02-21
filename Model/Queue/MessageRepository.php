@@ -69,6 +69,13 @@ class MessageRepository implements QueueMessageRepositoryInterface
         $collection = $this->collectionFactory->create()
             ->addFieldToFilter('status', 0)
             ->addFieldToFilter('queue_name', $queueName)
+            ->addFieldToFilter(
+                ['run_task_at', 'run_task_at'],
+                [
+                    ['null' => true],
+                    ['gteq' => date($this->getTimestampFormat(), time())]
+                ]
+            )
             ->setOrder('updated_at', 'ASC')
             ->setCurPage(1)
             ->setPageSize(1);
@@ -98,10 +105,15 @@ class MessageRepository implements QueueMessageRepositoryInterface
     /**
      * @inheritdoc
      */
-    public function requeue(QueueMessageInterface $message)
+    public function requeue(QueueMessageInterface $message, int $retryInterval)
     {
         // Trigger date update
         $message->setUpdatedAt(null);
+        if (empty($retryInterval)) {
+            $message->setRunTaskAt(null);
+        } else {
+            $message->setRunTaskAt(date($this->getTimestampFormat(), time() + $retryInterval));
+        }
         
         // Increase retries count
         $message->setRetries($message->getRetries() + 1);
@@ -118,5 +130,13 @@ class MessageRepository implements QueueMessageRepositoryInterface
     public function remove(QueueMessageInterface $message)
     {
         $this->resourceModel->delete($message);
+    }
+
+    /**
+     * @return string
+     */
+    protected function getTimestampFormat()
+    {
+        return 'Y-m-d H:i:s';
     }
 }

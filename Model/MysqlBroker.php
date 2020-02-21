@@ -89,12 +89,12 @@ class MysqlBroker implements \Rcason\Mq\Api\BrokerInterface
     /**
      * @inheritdoc
      */
-    public function reject(MessageEnvelopeInterface $message, bool $requeue)
+    public function reject(MessageEnvelopeInterface $message, bool $requeue, int $retryInterval)
     {
         $message = $this->queueMessageRepository->get($message->getBrokerRef());
         
         if($requeue) {
-            $this->queueMessageRepository->requeue($message);
+            $this->queueMessageRepository->requeue($message, $retryInterval);
             return;
         }
         $this->queueMessageRepository->remove($message);

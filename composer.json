@@ -20,6 +20,9 @@
         "phpmd/phpmd": "@stable",
         "php-coveralls/php-coveralls": "~2.1.0"
     },
+    "scripts": {
+        "test": "phpunit"
+    },
     "type": "magento2-module",
     "license": [
         "OSL-3.0"
