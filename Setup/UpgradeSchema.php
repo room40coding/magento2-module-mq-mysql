@@ -1,5 +1,5 @@
 <?php
-namespace Room40\Epicentre\Setup;
+namespace Rcason\MqMysql\Setup;
 
 use Magento\Framework\DB\Ddl\Table;
 use Magento\Framework\Setup\UpgradeSchemaInterface;

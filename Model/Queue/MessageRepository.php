@@ -73,7 +73,7 @@ class MessageRepository implements QueueMessageRepositoryInterface
                 ['run_task_at', 'run_task_at'],
                 [
                     ['null' => true],
-                    ['gteq' => date($this->getTimestampFormat(), time())]
+                    ['lteq' => date($this->getTimestampFormat(), time())]
                 ]
             )
             ->setOrder('updated_at', 'ASC')
