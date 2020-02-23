@@ -40,7 +40,7 @@ interface QueueMessageRepositoryInterface
      * 
      * @return void
      */
-    public function requeue(QueueMessageInterface $message, int $retryInterval);
+    public function requeue(QueueMessageInterface $message, int $maxRetries, int $retryInterval);
     
     /**
      * Remove message from queue

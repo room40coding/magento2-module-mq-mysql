@@ -30,26 +30,18 @@ class MessageRepository implements QueueMessageRepositoryInterface
     protected $collectionFactory;
     
     /**
-     * @var int
-     */
-    protected $maxRetries;
-    
-    /**
      * @param QueueMessageInterfaceFactory $queueMessageFactory
      * @param ResourceModel $resourceModel
      * @param CollectionFactory $collectionFactory
-     * @param int $maxRetries
      */
     public function __construct(
         QueueMessageInterfaceFactory $queueMessageFactory,
         ResourceModel $resourceModel,
-        CollectionFactory $collectionFactory,
-        $maxRetries = 5
+        CollectionFactory $collectionFactory
     ) {
         $this->queueMessageFactory = $queueMessageFactory;
         $this->resourceModel = $resourceModel;
         $this->collectionFactory = $collectionFactory;
-        $this->maxRetries = $maxRetries;
     }
     
     /**
@@ -105,7 +97,7 @@ class MessageRepository implements QueueMessageRepositoryInterface
     /**
      * @inheritdoc
      */
-    public function requeue(QueueMessageInterface $message, int $retryInterval)
+    public function requeue(QueueMessageInterface $message, int $maxRetries, int $retryInterval)
     {
         // Trigger date update
         $message->setUpdatedAt(null);
@@ -117,7 +109,7 @@ class MessageRepository implements QueueMessageRepositoryInterface
         
         // Increase retries count
         $message->setRetries($message->getRetries() + 1);
-        if($message->getRetries() >= $this->maxRetries) {
+        if($maxRetries > 0 && $message->getRetries() >= $maxRetries) {
             $message->setStatus(QueueMessageInterface::STATUS_MAX_RETRIES_EXCEEDED);
         }
         
