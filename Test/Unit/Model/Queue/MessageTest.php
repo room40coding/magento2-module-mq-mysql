@@ -23,7 +23,7 @@ class MessageTest extends \PHPUnit\Framework\TestCase
     /**
      * @inheritdoc
      */
-    protected function setUp()
+    protected function setUp(): void
     {
         $objectManager = new ObjectManager($this);
         $this->message = $objectManager->getObject(Message::class);
