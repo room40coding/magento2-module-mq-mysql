@@ -2,7 +2,7 @@
     "name": "room40coding/magento2-module-mq-mysql",
     "description": "Magento 2 Message Queue OS MySQL Broker Implementation by renatocason",
     "require": {
-        "room40coding/magento2-module-mq": "~1.0.0"
+        "room40coding/magento2-module-mq": "^2.0"
     },
     "require-dev": {
         "phpunit/phpunit": "~6.5.13",
