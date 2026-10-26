@@ -40,7 +40,11 @@ Author:
 ## License
 Licensed under the Open Software License version 3.0
 
-## Concurrent consumers: claims and leases (2.1.0)
+## Concurrent consumers: claims and leases (3.0.0)
+
+Major because the `@api` `QueueMessageRepositoryInterface` gains `claim()`, `acknowledge()` and
+`requeueClaimed()`, `MysqlBroker`'s constructor gains a `QueueAttributesInterface` dependency, and
+`acknowledge()`/`reject()` can now throw `ClaimLostException`.
 
 `peek()` is an **atomic claim**, not a read. Any number of consumers may drain the same queue — a
 long-running `epicentre:mq:consume` worker next to a `ce_cron` tick, or several workers — and each
