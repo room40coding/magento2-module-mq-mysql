@@ -2,222 +2,254 @@
 
 namespace Rcason\MqMysql\Test\Unit\Model;
 
+use Magento\Framework\Exception\LocalizedException;
 use Magento\Framework\TestFramework\Unit\Helper\ObjectManager;
+use PHPUnit\Framework\MockObject\MockObject;
+use PHPUnit\Framework\TestCase;
 use Rcason\Mq\Api\BrokerInterface;
 use Rcason\Mq\Api\Data\MessageEnvelopeInterfaceFactory;
+use Rcason\Mq\Api\Config\QueueAttributesInterface;
 use Rcason\Mq\Model\MessageEnvelope;
 use Rcason\MqMysql\Api\Data\QueueMessageInterfaceFactory;
 use Rcason\MqMysql\Api\QueueMessageRepositoryInterface;
-use Rcason\MqMysql\Model\Queue\Message;
+use Rcason\MqMysql\Exception\ClaimLostException;
 use Rcason\MqMysql\Model\MysqlBroker;
+use Rcason\MqMysql\Model\Queue\Message;
 
 /**
  * @SuppressWarnings(PHPMD.LongVariable)
  */
-class MysqlBrokerTest extends \PHPUnit\Framework\TestCase
+class MysqlBrokerTest extends TestCase
 {
-    const QUEUE_NAME = 'test_queue';
-    const MESSAGE_ID = 294;
-    const MESSAGE_CONTENT = 'Message content';
-    
-    /**
-     * @var QueueMessageInterfaceFactory|MockObject
-     */
-    private $queueMessageFactory;
-    
-    /**
-     * @var MessageEnvelopeInterfaceFactory|MockObject
-     */
-    private $messageEnvelopeFactory;
-    
-    /**
-     * @var QueueMessageRepositoryInterface|MockObject
-     */
-    private $queueMessageRepository;
-    
-    /**
-     * @var MessageEnvelope
-     */
-    private $messageEnvelope;
-    
-    /**
-     * @var Message
-     */
-    private $message;
-    
-    /**
-     * @var MysqlBroker
-     */
-    private $mysqlBroker;
+    private const QUEUE_NAME = 'test_queue';
+    private const MESSAGE_ID = 294;
+    private const MESSAGE_CONTENT = 'Message content';
+    private const OWNER = 'host:4242';
 
-    /**
-     * @inheritdoc
-     */
-    protected function setUp()
+    /** @var QueueMessageInterfaceFactory&MockObject */
+    private $queueMessageFactory;
+
+    /** @var QueueMessageRepositoryInterface&MockObject */
+    private $queueMessageRepository;
+
+    /** @var QueueAttributesInterface&MockObject */
+    private $queueConfig;
+
+    private Message $message;
+
+    private MysqlBroker $mysqlBroker;
+
+    protected function setUp(): void
     {
         $objectManager = new ObjectManager($this);
-        
+
         $this->queueMessageFactory = $this->getMockBuilder(QueueMessageInterfaceFactory::class)
             ->disableOriginalConstructor()
-            ->setMethods(['create'])
+            ->onlyMethods(['create'])
             ->getMock();
-        
-        $this->messageEnvelopeFactory = $this->getMockBuilder(MessageEnvelopeInterfaceFactory::class)
+
+        // Real envelopes: the token travels on the DataObject, which is what the broker relies on.
+        $messageEnvelopeFactory = $this->getMockBuilder(MessageEnvelopeInterfaceFactory::class)
             ->disableOriginalConstructor()
-            ->setMethods(['create'])
+            ->onlyMethods(['create'])
             ->getMock();
-        
-        $this->queueMessageRepository = $this->getMockForAbstractClass(QueueMessageRepositoryInterface::class);
-        $this->messageEnvelope = $objectManager->getObject(MessageEnvelope::class);
+        $messageEnvelopeFactory->method('create')
+            ->willReturnCallback(static fn () => new MessageEnvelope());
+
+        $this->queueMessageRepository = $this->createMock(QueueMessageRepositoryInterface::class);
+        $this->queueConfig = $this->createMock(QueueAttributesInterface::class);
         $this->message = $objectManager->getObject(Message::class);
-        
+
         $this->mysqlBroker = $objectManager->getObject(MysqlBroker::class, [
             'queueMessageFactory' => $this->queueMessageFactory,
-            'messageEnvelopeFactory' => $this->messageEnvelopeFactory,
+            'messageEnvelopeFactory' => $messageEnvelopeFactory,
             'queueMessageRepository' => $this->queueMessageRepository,
+            'queueConfig' => $this->queueConfig,
             'queueName' => self::QUEUE_NAME,
+            'ownerId' => self::OWNER,
         ]);
-        
+
         parent::setUp();
     }
-    
-    public function testServiceContract()
+
+    public function testServiceContract(): void
     {
         $this->assertInstanceOf(BrokerInterface::class, $this->mysqlBroker);
     }
 
-    /**
-     * @covers Rcason\MqMysql\Model\MysqlBroker::enqueue
-     */
-    public function testEnqueue()
+    public function testEnqueue(): void
     {
-        $result = true;
-        
         $this->queueMessageFactory->expects($this->once())
             ->method('create')
             ->willReturn($this->message);
-        
+
         $this->queueMessageRepository->expects($this->once())
             ->method('create')
-            ->with($this->message)
-            ->willReturn($result);
-        
-        $this->messageEnvelope->setContent(self::MESSAGE_CONTENT);
-        
-        $this->assertEquals(
-            $this->mysqlBroker->enqueue($this->messageEnvelope),
-            $result
-        );
-        
-        $this->assertEquals(
-            $this->message->getQueueName(),
-            self::QUEUE_NAME
-        );
-        
-        $this->assertEquals(
-            $this->message->getMessageContent(),
-            $this->messageEnvelope->getContent()
-        );
+            ->with($this->message);
+
+        $envelope = (new MessageEnvelope())->setContent(self::MESSAGE_CONTENT);
+        $this->mysqlBroker->enqueue($envelope);
+
+        $this->assertSame(self::QUEUE_NAME, $this->message->getQueueName());
+        $this->assertSame(self::MESSAGE_CONTENT, $this->message->getMessageContent());
     }
 
-    /**
-     * @covers Rcason\MqMysql\Model\MysqlBroker::peek
-     */
-    public function testPeek()
+    public function testPeekClaimsWithTheQueuesConfiguredLeaseAndRetryCap(): void
     {
-        $this->message->setId(self::MESSAGE_ID);
-        $this->message->setMessageContent(self::MESSAGE_CONTENT);
-        
+        $this->configureQueue(['leaseSeconds' => '120', 'maxRetries' => '7']);
+        $this->message->setData(['entity_id' => self::MESSAGE_ID, 'message_content' => self::MESSAGE_CONTENT]);
+
         $this->queueMessageRepository->expects($this->once())
-            ->method('peek')
+            ->method('claim')
+            ->with(self::QUEUE_NAME, $this->matchesRegularExpression('/^host:4242:[0-9a-f]{12}$/'), 120, 7)
             ->willReturn($this->message);
-        
-        $this->messageEnvelopeFactory->expects($this->once())
-            ->method('create')
-            ->willReturn($this->messageEnvelope);
-        
-        $this->assertEquals(
-            $this->mysqlBroker->peek(),
-            $this->messageEnvelope
-        );
-        
-        $this->assertEquals(
-            $this->messageEnvelope->getBrokerRef(),
-            self::MESSAGE_ID
-        );
-        
-        $this->assertEquals(
-            $this->messageEnvelope->getContent(),
-            self::MESSAGE_CONTENT
-        );
+
+        $envelope = $this->mysqlBroker->peek();
+
+        $this->assertSame(self::MESSAGE_ID, $envelope->getBrokerRef());
+        $this->assertSame(self::MESSAGE_CONTENT, $envelope->getContent());
+        $this->assertMatchesRegularExpression('/^host:4242:[0-9a-f]{12}$/', $envelope->getData(MysqlBroker::CLAIM_TOKEN_KEY));
     }
-    
-    /**
-     * @covers Rcason\MqMysql\Model\MysqlBroker::peek
-     */
-    public function testPeekEmptyQueue()
+
+    public function testPeekFallsBackToTheDefaultLeaseAndNoRetryCapWhenTheQueueSetsNone(): void
     {
+        $this->configureQueue([]);
+
         $this->queueMessageRepository->expects($this->once())
-            ->method('peek')
+            ->method('claim')
+            ->with(self::QUEUE_NAME, $this->anything(), MysqlBroker::DEFAULT_LEASE_SECONDS, 0)
             ->willReturn(null);
-        
-        $this->assertEquals(
-            $this->mysqlBroker->peek(),
-            false
-        );
+
+        $this->assertFalse($this->mysqlBroker->peek());
+    }
+
+    public function testANonPositiveLeaseFallsBackToTheDefault(): void
+    {
+        $this->configureQueue(['leaseSeconds' => '0']);
+
+        $this->queueMessageRepository->expects($this->once())
+            ->method('claim')
+            ->with(self::QUEUE_NAME, $this->anything(), MysqlBroker::DEFAULT_LEASE_SECONDS, 0)
+            ->willReturn(null);
+
+        $this->assertFalse($this->mysqlBroker->peek());
+    }
+
+    public function testPeekReturnsFalseWhenNothingIsClaimable(): void
+    {
+        $this->configureQueue([]);
+        $this->queueMessageRepository->method('claim')->willReturn(null);
+
+        $this->assertFalse($this->mysqlBroker->peek());
+    }
+
+    public function testEveryPeekMintsADistinctToken(): void
+    {
+        $this->configureQueue([]);
+        $this->message->setData(['entity_id' => self::MESSAGE_ID, 'message_content' => self::MESSAGE_CONTENT]);
+        $this->queueMessageRepository->method('claim')->willReturn($this->message);
+
+        $first = $this->mysqlBroker->peek()->getData(MysqlBroker::CLAIM_TOKEN_KEY);
+        $second = $this->mysqlBroker->peek()->getData(MysqlBroker::CLAIM_TOKEN_KEY);
+
+        $this->assertNotSame($first, $second);
+    }
+
+    public function testAcknowledgeDeletesTheRowOnlyUnderItsOwnToken(): void
+    {
+        $envelope = $this->claimedEnvelope();
+
+        $this->queueMessageRepository->expects($this->once())
+            ->method('acknowledge')
+            ->with(self::MESSAGE_ID, $envelope->getData(MysqlBroker::CLAIM_TOKEN_KEY))
+            ->willReturn(true);
+
+        $this->mysqlBroker->acknowledge($envelope);
+    }
+
+    public function testAcknowledgeThrowsWhenTheClaimWasLost(): void
+    {
+        $envelope = $this->claimedEnvelope();
+        $this->queueMessageRepository->method('acknowledge')->willReturn(false);
+
+        $this->expectException(ClaimLostException::class);
+        $this->expectExceptionMessage('message 294 before acknowledge');
+
+        $this->mysqlBroker->acknowledge($envelope);
+    }
+
+    public function testRejectWithRequeueReleasesWithTheRunnersBackoff(): void
+    {
+        $envelope = $this->claimedEnvelope();
+
+        $this->queueMessageRepository->expects($this->once())
+            ->method('requeueClaimed')
+            ->with(self::MESSAGE_ID, $envelope->getData(MysqlBroker::CLAIM_TOKEN_KEY), 15, 60)
+            ->willReturn(true);
+        $this->queueMessageRepository->expects($this->never())->method('acknowledge');
+
+        $this->mysqlBroker->reject($envelope, true, 15, 60);
+    }
+
+    public function testRejectWithoutRequeueDeletesUnderItsOwnToken(): void
+    {
+        $envelope = $this->claimedEnvelope();
+
+        $this->queueMessageRepository->expects($this->once())
+            ->method('acknowledge')
+            ->with(self::MESSAGE_ID, $envelope->getData(MysqlBroker::CLAIM_TOKEN_KEY))
+            ->willReturn(true);
+        $this->queueMessageRepository->expects($this->never())->method('requeueClaimed');
+
+        $this->mysqlBroker->reject($envelope, false);
+    }
+
+    public function testRejectThrowsWhenTheClaimWasLost(): void
+    {
+        $envelope = $this->claimedEnvelope();
+        $this->queueMessageRepository->method('requeueClaimed')->willReturn(false);
+
+        $this->expectException(ClaimLostException::class);
+        $this->expectExceptionMessage('before requeue');
+
+        $this->mysqlBroker->reject($envelope, true, 15, 60);
+    }
+
+    public function testAnEnvelopeThatDidNotComeFromPeekIsRefused(): void
+    {
+        $foreign = (new MessageEnvelope())->setBrokerRef(self::MESSAGE_ID)->setContent(self::MESSAGE_CONTENT);
+        $this->queueMessageRepository->expects($this->never())->method('acknowledge');
+
+        $this->expectException(LocalizedException::class);
+        $this->expectExceptionMessage('carries no claim token');
+
+        $this->mysqlBroker->acknowledge($foreign);
     }
 
     /**
-     * @covers Rcason\MqMysql\Model\MysqlBroker::acknowledge
+     * @param array<string, string> $attributes <ceQueue> attributes declared for the test queue
      */
-    public function testAcknowledge()
+    private function configureQueue(array $attributes): void
     {
-        $this->queueMessageRepository->expects($this->once())
-            ->method('get')
-            ->with(self::MESSAGE_ID)
-            ->willReturn($this->message);
-        
-        $this->queueMessageRepository->expects($this->once())
-            ->method('remove')
-            ->with($this->message);
-        
-        $this->messageEnvelope->setBrokerRef(self::MESSAGE_ID);
-        $this->mysqlBroker->acknowledge($this->messageEnvelope);
+        $declared = [
+            'other_queue' => ['leaseSeconds' => '5', 'maxRetries' => '99'],
+            self::QUEUE_NAME => $attributes,
+        ];
+        $this->queueConfig->method('getQueueAttribute')
+            ->willReturnCallback(
+                static fn (string $queue, string $attribute): ?string => $declared[$queue][$attribute] ?? null
+            );
     }
 
-    /**
-     * @covers Rcason\MqMysql\Model\MysqlBroker::reject
-     */
-    public function testReject()
+    private function claimedEnvelope(): MessageEnvelope
     {
-        $this->queueMessageRepository->expects($this->once())
-            ->method('get')
-            ->with(self::MESSAGE_ID)
-            ->willReturn($this->message);
-        
-        $this->queueMessageRepository->expects($this->once())
-            ->method('remove')
-            ->with($this->message);
-        
-        $this->messageEnvelope->setBrokerRef(self::MESSAGE_ID);
-        $this->mysqlBroker->reject($this->messageEnvelope, false, 5, 0);
-    }
-    
-    /**
-     * @covers Rcason\MqMysql\Model\MysqlBroker::reject
-     */
-    public function testRejectRequeue()
-    {
-        $this->queueMessageRepository->expects($this->once())
-            ->method('get')
-            ->with(self::MESSAGE_ID)
-            ->willReturn($this->message);
-        
-        $this->queueMessageRepository->expects($this->once())
-            ->method('requeue')
-            ->with($this->message);
-        
-        $this->messageEnvelope->setBrokerRef(self::MESSAGE_ID);
-        $this->mysqlBroker->reject($this->messageEnvelope, true, 5, 0);
+        $this->configureQueue([]);
+        $this->message->setData(['entity_id' => self::MESSAGE_ID, 'message_content' => self::MESSAGE_CONTENT]);
+        $this->queueMessageRepository->method('claim')->willReturn($this->message);
+
+        /** @var MessageEnvelope $envelope */
+        $envelope = $this->mysqlBroker->peek();
+
+        return $envelope;
     }
 }

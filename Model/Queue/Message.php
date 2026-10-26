@@ -144,4 +144,38 @@ class Message extends AbstractModel
         $this->setData(QueueMessageInterface::RUN_TASK_AT, $runTaskAt);
         return $this;
     }
+
+    /**
+     * @inheritdoc
+     */
+    public function getLockedBy()
+    {
+        return $this->getData(QueueMessageInterface::LOCKED_BY);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function setLockedBy($lockedBy)
+    {
+        $this->setData(QueueMessageInterface::LOCKED_BY, $lockedBy);
+        return $this;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getLockedUntil()
+    {
+        return $this->getData(QueueMessageInterface::LOCKED_UNTIL);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function setLockedUntil($lockedUntil)
+    {
+        $this->setData(QueueMessageInterface::LOCKED_UNTIL, $lockedUntil);
+        return $this;
+    }
 }

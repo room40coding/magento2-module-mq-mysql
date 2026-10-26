@@ -51,6 +51,39 @@ class MessageRepository implements QueueMessageRepositoryInterface
     {
         $this->resourceModel->save($message);
     }
+
+    /**
+     * @inheritdoc
+     */
+    public function claim(string $queueName, string $token, int $leaseSeconds, int $maxRetries = 0): ?QueueMessageInterface
+    {
+        $row = $this->resourceModel->claimNext($queueName, $token, $leaseSeconds, $maxRetries);
+        if ($row === null) {
+            return null;
+        }
+
+        /** @var QueueMessageInterface&\Magento\Framework\Model\AbstractModel $message */
+        $message = $this->queueMessageFactory->create();
+        $message->setData($row);
+
+        return $message;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function acknowledge(int $messageId, string $token): bool
+    {
+        return $this->resourceModel->deleteClaimed($messageId, $token);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function requeueClaimed(int $messageId, string $token, int $maxRetries, int $retryInterval): bool
+    {
+        return $this->resourceModel->requeueClaimed($messageId, $token, $maxRetries, $retryInterval);
+    }
     
     /**
      * @inheritdoc
