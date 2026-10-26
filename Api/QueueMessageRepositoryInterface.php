@@ -5,6 +5,10 @@ namespace Rcason\MqMysql\Api;
 use Magento\Framework\Exception\NotFoundException;
 use Rcason\MqMysql\Api\Data\QueueMessageInterface;
 
+/**
+ * @api
+ * @SuppressWarnings(PHPMD.ShortVariable)
+ */
 interface QueueMessageRepositoryInterface
 {
     /**
@@ -30,7 +34,7 @@ interface QueueMessageRepositoryInterface
      * @param int $maxRetries Retry cap applied when reclaiming an expired lease; 0 disables it.
      * @return QueueMessageInterface|null Null when nothing is runnable right now.
      */
-    public function claim(string $queueName, string $token, int $leaseSeconds, int $maxRetries = 0);
+    public function claim(string $queueName, string $token, int $leaseSeconds, int $maxRetries = 0): ?QueueMessageInterface;
 
     /**
      * Remove a message this token still holds (successful processing, or reject without requeue).

@@ -4,6 +4,7 @@ namespace Rcason\MqMysql\Model\ResourceModel\Queue;
 
 use Magento\Framework\Model\ResourceModel\Db\VersionControl\AbstractDb;
 use Rcason\MqMysql\Api\Data\QueueMessageInterface;
+use Zend_Db_Expr;
 
 /**
  * `ce_queue_message` storage, plus the claim protocol that makes the queue safe for concurrent
@@ -13,6 +14,8 @@ use Rcason\MqMysql\Api\Data\QueueMessageInterface;
  * caller observed (compare-and-swap). Two consumers racing for one message therefore cannot both
  * win: the second UPDATE matches zero rows. All clock comparisons use the database's
  * UTC_TIMESTAMP() so consumers on hosts with skewed clocks agree on "due" and "expired".
+ *
+ * @SuppressWarnings(PHPMD.CamelCaseMethodName)
  */
 class Message extends AbstractDb
 {
@@ -38,7 +41,7 @@ class Message extends AbstractDb
      * @param int $leaseSeconds Lease length; at least one second.
      * @param int $maxRetries Reclaim cap: an expired-lease message whose next retry would reach this
      *                        is dead-lettered instead of handed out. 0 = no cap here.
-     * @return array<string, mixed>|null The claimed row, or null when nothing is runnable.
+     * @return array<string, string|int|null>|null The claimed row, or null when nothing is runnable.
      */
     public function claimNext(string $queueName, string $token, int $leaseSeconds, int $maxRetries = 0): ?array
     {
@@ -79,25 +82,26 @@ class Message extends AbstractDb
                 'locked_until IS NULL OR locked_until <= UTC_TIMESTAMP()',
             ];
 
-            if ($isReclaim && $maxRetries > 0 && $observedRetries + 1 >= $maxRetries) {
+            if ($isReclaim && self::exhausted($observedRetries + 1, $maxRetries)) {
                 // Out of retries: park it rather than let a message that kills its consumer every
-                // time circulate forever. Whether or not this CAS wins, the row is no longer ours
-                // to hand out, so move on.
+                // time circulate forever. The previous holder keeps its token on purpose: if it was
+                // merely slow and still finishes, its acknowledge() deletes the row, so a message
+                // that was in fact processed does not linger as a dead letter. Whether or not this
+                // CAS wins, the row is no longer ours to hand out, so move on.
                 $connection->update($table, [
                     'status' => QueueMessageInterface::STATUS_MAX_RETRIES_EXCEEDED,
                     'retries' => $observedRetries + 1,
-                    'locked_by' => null,
-                    'locked_until' => null,
                 ], $where);
                 continue;
             }
 
             $affected = $connection->update($table, [
                 'locked_by' => $token,
-                'locked_until' => new \Zend_Db_Expr(
-                    sprintf('UTC_TIMESTAMP() + INTERVAL %d SECOND', max(1, $leaseSeconds))
-                ),
+                'locked_until' => self::utcPlusSeconds(max(1, $leaseSeconds)),
                 'retries' => $observedRetries + ($isReclaim ? 1 : 0),
+                // Claiming is not progress: keep the row's FIFO position and the age operators see.
+                // An explicit assignment suppresses ON UPDATE CURRENT_TIMESTAMP.
+                'updated_at' => new Zend_Db_Expr('updated_at'),
             ], $where);
 
             if ($affected === 1) {
@@ -150,25 +154,37 @@ class Message extends AbstractDb
 
         $observedRetries = (int) $row['retries'];
         $retries = $observedRetries + 1;
-        $exhausted = $maxRetries > 0 && $retries >= $maxRetries;
 
         return $connection->update($table, [
             'retries' => $retries,
-            'status' => $exhausted
+            'status' => self::exhausted($retries, $maxRetries)
                 ? QueueMessageInterface::STATUS_MAX_RETRIES_EXCEEDED
                 : QueueMessageInterface::STATUS_TO_PROCESS,
-            'run_task_at' => $retryInterval > 0
-                ? new \Zend_Db_Expr(sprintf('UTC_TIMESTAMP() + INTERVAL %d SECOND', $retryInterval))
-                : null,
+            'run_task_at' => $retryInterval > 0 ? self::utcPlusSeconds($retryInterval) : null,
             'locked_by' => null,
             'locked_until' => null,
             // Explicit so the FIFO order (updated_at ASC) moves a requeued message behind newer ones
             // even on a connection whose ON UPDATE default is not in play.
-            'updated_at' => new \Zend_Db_Expr('CURRENT_TIMESTAMP'),
+            'updated_at' => new Zend_Db_Expr('CURRENT_TIMESTAMP'),
         ], [
             'entity_id = ?' => $messageId,
             'locked_by = ?' => $token,
             'retries = ?' => $observedRetries,
         ]) === 1;
+    }
+
+    /**
+     * The one retry cap, shared by reclaim and requeue: dead-letter once the count reaches the cap.
+     *
+     * @param int $maxRetries 0 = no cap
+     */
+    private static function exhausted(int $retries, int $maxRetries): bool
+    {
+        return $maxRetries > 0 && $retries >= $maxRetries;
+    }
+
+    private static function utcPlusSeconds(int $seconds): Zend_Db_Expr
+    {
+        return new Zend_Db_Expr(sprintf('UTC_TIMESTAMP() + INTERVAL %d SECOND', $seconds));
     }
 }

@@ -3,7 +3,8 @@
 namespace Rcason\MqMysql\Model;
 
 use Magento\Framework\Exception\LocalizedException;
-use Rcason\Mq\Api\Config\ConfigInterface;
+use Rcason\Mq\Api\BrokerInterface;
+use Rcason\Mq\Api\Config\QueueAttributesInterface;
 use Rcason\Mq\Api\Data\MessageEnvelopeInterface;
 use Rcason\Mq\Api\Data\MessageEnvelopeInterfaceFactory;
 use Rcason\MqMysql\Api\Data\QueueMessageInterfaceFactory;
@@ -20,8 +21,10 @@ use Rcason\MqMysql\Exception\ClaimLostException;
  * instead of touching the other consumer's row. The lease must therefore outlast the slowest
  * process() on the queue: configure it per queue with the `leaseSeconds` attribute in ce_mq.xml,
  * or rely on the default below.
+ *
+ * @SuppressWarnings(PHPMD.LongVariable)
  */
-class MysqlBroker implements \Rcason\Mq\Api\BrokerInterface
+class MysqlBroker implements BrokerInterface
 {
     /**
      * Envelope data key carrying the claim token from peek() to acknowledge()/reject().
@@ -52,12 +55,12 @@ class MysqlBroker implements \Rcason\Mq\Api\BrokerInterface
     protected $queueMessageRepository;
     
     /**
-     * @var string
+     * @var string|null
      */
     protected $queueName;
 
     /**
-     * @var ConfigInterface
+     * @var QueueAttributesInterface
      */
     private $queueConfig;
 
@@ -77,7 +80,7 @@ class MysqlBroker implements \Rcason\Mq\Api\BrokerInterface
      * @param QueueMessageInterfaceFactory $queueMessageFactory
      * @param MessageEnvelopeInterfaceFactory $messageEnvelopeFactory
      * @param QueueMessageRepositoryInterface $queueMessageRepository
-     * @param ConfigInterface $queueConfig
+     * @param QueueAttributesInterface $queueConfig
      * @param string|null $queueName
      * @param int $defaultLeaseSeconds
      * @param string|null $ownerId
@@ -86,8 +89,8 @@ class MysqlBroker implements \Rcason\Mq\Api\BrokerInterface
         QueueMessageInterfaceFactory $queueMessageFactory,
         MessageEnvelopeInterfaceFactory $messageEnvelopeFactory,
         QueueMessageRepositoryInterface $queueMessageRepository,
-        ConfigInterface $queueConfig,
-        $queueName = null,
+        QueueAttributesInterface $queueConfig,
+        ?string $queueName = null,
         int $defaultLeaseSeconds = self::DEFAULT_LEASE_SECONDS,
         ?string $ownerId = null
     ) {
@@ -168,11 +171,11 @@ class MysqlBroker implements \Rcason\Mq\Api\BrokerInterface
     }
 
     /**
-     * Lease for this queue: ce_mq.xml `leaseSeconds` when set, else the broker default.
+     * Lease for this queue: ce_mq.xml `leaseSeconds` when set to a positive number, else the default.
      */
-    public function leaseSeconds(): int
+    private function leaseSeconds(): int
     {
-        $configured = (int) ($this->queueSetting(self::ATTR_LEASE_SECONDS) ?? 0);
+        $configured = (int) $this->queueConfig->getQueueAttribute((string) $this->queueName, self::ATTR_LEASE_SECONDS);
 
         return $configured > 0 ? $configured : $this->defaultLeaseSeconds;
     }
@@ -180,9 +183,9 @@ class MysqlBroker implements \Rcason\Mq\Api\BrokerInterface
     /**
      * Retry cap applied when an expired lease is reclaimed: ce_mq.xml `maxRetries`, 0 = none.
      */
-    public function maxRetries(): int
+    private function maxRetries(): int
     {
-        return max(0, (int) ($this->queueSetting(self::ATTR_MAX_RETRIES) ?? 0));
+        return max(0, (int) $this->queueConfig->getQueueAttribute((string) $this->queueName, self::ATTR_MAX_RETRIES));
     }
 
     /**
@@ -223,26 +226,5 @@ class MysqlBroker implements \Rcason\Mq\Api\BrokerInterface
             $messageId,
             $operation
         ));
-    }
-
-    /**
-     * Read one of this queue's <ceQueue> attributes. The Rcason config object keeps every
-     * attribute of the merged ce_mq.xml under 'queues' (same fallback CeCron uses).
-     *
-     * @return string|int|null
-     */
-    private function queueSetting(string $attribute)
-    {
-        if (!method_exists($this->queueConfig, 'get')) {
-            return null;
-        }
-
-        foreach ((array) $this->queueConfig->get('queues', []) as $queue) {
-            if (($queue['name'] ?? null) === $this->queueName) {
-                return $queue[$attribute] ?? null;
-            }
-        }
-
-        return null;
     }
 }

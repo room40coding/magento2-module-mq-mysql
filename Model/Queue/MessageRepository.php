@@ -9,6 +9,9 @@ use Rcason\MqMysql\Api\QueueMessageRepositoryInterface;
 use Rcason\MqMysql\Model\ResourceModel\Queue\Message as ResourceModel;
 use Rcason\MqMysql\Model\ResourceModel\Queue\Message\CollectionFactory;
 
+/**
+ * @SuppressWarnings(PHPMD.ShortVariable)
+ */
 class MessageRepository implements QueueMessageRepositoryInterface
 {
     /**
@@ -52,7 +55,7 @@ class MessageRepository implements QueueMessageRepositoryInterface
     /**
      * @inheritdoc
      */
-    public function claim(string $queueName, string $token, int $leaseSeconds, int $maxRetries = 0)
+    public function claim(string $queueName, string $token, int $leaseSeconds, int $maxRetries = 0): ?QueueMessageInterface
     {
         $row = $this->resourceModel->claimNext($queueName, $token, $leaseSeconds, $maxRetries);
         if ($row === null) {

@@ -24,7 +24,7 @@ interface QueueMessageInterface
     const LOCKED_UNTIL = 'locked_until';
     
     /**
-     * @return int
+     * @return int|null Null until the message is persisted.
      */
     public function getEntityId();
     
@@ -101,12 +101,14 @@ interface QueueMessageInterface
     public function setMessageContent($messageContent);
 
     /**
+     * Date/time (UTC) before which the message is not runnable. Null means ASAP.
+     *
      * @return string|null
      */
     public function getRunTaskAt();
 
     /**
-     * @param string|null $runTaskAt
+     * @param string|null $runTaskAt Null means ASAP.
      * @return $this
      */
     public function setRunTaskAt($runTaskAt);

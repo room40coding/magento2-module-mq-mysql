@@ -56,18 +56,32 @@ message is handed out once:
    and change nothing — the other consumer owns the outcome now.
 4. A reclaim of an expired lease counts as a retry. When that would reach the queue's `maxRetries`
    the message is dead-lettered (`status = 1`) instead of handed out, so a message that kills its
-   consumer every time cannot circulate forever.
+   consumer every time cannot circulate forever. Only the reclaim path can end a true crash loop: a
+   consumer that dies never calls `reject()`. The parked row keeps the previous holder's token, so
+   if that holder was merely slow and still finishes, its `acknowledge()` deletes the row and no
+   dead letter is left for a message that was in fact processed.
+5. Claiming does not touch `updated_at`: a message keeps its FIFO position and the age operators
+   see. `reject(requeue)` does bump it, moving the message behind newer ones.
 
-Per queue in `ce_mq.xml` (needs `room40coding/magento2-module-mq` ≥ 2.1 for the schema):
+Per queue in `ce_mq.xml` (needs `room40coding/magento2-module-mq` ≥ 2.1 for the schema and the
+`QueueAttributesInterface` the broker reads it through):
 
 ```xml
-<ceQueue name="bombe.order.process" broker="mysql" … maxRetries="15" leaseSeconds="300" />
+<ceQueue name="bombe.order.process" broker="mysql" … maxRetries="15" leaseSeconds="3600" />
 ```
 
-`leaseSeconds` **must exceed the slowest `process()` on that queue**; default 900. Trade-off: a
-consumer killed mid-process (SIGKILL, OOM) has its message redelivered after the lease, where the
-unlocked broker redelivered immediately — and also to every other reader, which is the bug this
-closes. Graceful SIGTERM handling in the runner avoids leaving leases behind on deploys.
+`leaseSeconds` **must exceed the slowest `process()` on that queue** (size it for the worst case,
+not the typical one; the schema rejects 0 and negatives, and a missing attribute means the default
+900). Trade-off: a consumer killed mid-process (SIGKILL, OOM, supervisor's `stopwaitsecs` running
+out) has its message redelivered only after the lease lapses, where the unlocked broker redelivered
+immediately — and also to every other reader, which is the bug this closes. A runner that finishes
+its current message on SIGTERM leaves no lease behind; one that is killed mid-message does.
+
+Reading the table: `status = 0` with a live `locked_until` is in flight; `status = 1` with
+`locked_by` set was parked at the reclaim cap while that holder still had it (check whether the
+holder completed before replaying); `status = 1` with no lock was given up by `reject()`. To replay
+a dead letter by hand clear the lock too:
+`UPDATE ce_queue_message SET status = 0, retries = 0, run_task_at = NULL, locked_by = NULL, locked_until = NULL WHERE entity_id = ?`.
 
 Schema: `locked_by VARCHAR(128) NULL`, `locked_until DATETIME NULL` (UpgradeSchema 0.1.2). All clock
 comparisons are database-side `UTC_TIMESTAMP()`, so consumers on hosts with skewed clocks agree.

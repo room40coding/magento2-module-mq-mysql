@@ -8,7 +8,7 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Rcason\Mq\Api\BrokerInterface;
 use Rcason\Mq\Api\Data\MessageEnvelopeInterfaceFactory;
-use Rcason\Mq\Model\Config\Config;
+use Rcason\Mq\Api\Config\QueueAttributesInterface;
 use Rcason\Mq\Model\MessageEnvelope;
 use Rcason\MqMysql\Api\Data\QueueMessageInterfaceFactory;
 use Rcason\MqMysql\Api\QueueMessageRepositoryInterface;
@@ -16,6 +16,9 @@ use Rcason\MqMysql\Exception\ClaimLostException;
 use Rcason\MqMysql\Model\MysqlBroker;
 use Rcason\MqMysql\Model\Queue\Message;
 
+/**
+ * @SuppressWarnings(PHPMD.LongVariable)
+ */
 class MysqlBrokerTest extends TestCase
 {
     private const QUEUE_NAME = 'test_queue';
@@ -29,7 +32,7 @@ class MysqlBrokerTest extends TestCase
     /** @var QueueMessageRepositoryInterface&MockObject */
     private $queueMessageRepository;
 
-    /** @var Config&MockObject */
+    /** @var QueueAttributesInterface&MockObject */
     private $queueConfig;
 
     private Message $message;
@@ -54,7 +57,7 @@ class MysqlBrokerTest extends TestCase
             ->willReturnCallback(static fn () => new MessageEnvelope());
 
         $this->queueMessageRepository = $this->createMock(QueueMessageRepositoryInterface::class);
-        $this->queueConfig = $this->createMock(Config::class);
+        $this->queueConfig = $this->createMock(QueueAttributesInterface::class);
         $this->message = $objectManager->getObject(Message::class);
 
         $this->mysqlBroker = $objectManager->getObject(MysqlBroker::class, [
@@ -111,6 +114,18 @@ class MysqlBrokerTest extends TestCase
     public function testPeekFallsBackToTheDefaultLeaseAndNoRetryCapWhenTheQueueSetsNone(): void
     {
         $this->configureQueue([]);
+
+        $this->queueMessageRepository->expects($this->once())
+            ->method('claim')
+            ->with(self::QUEUE_NAME, $this->anything(), MysqlBroker::DEFAULT_LEASE_SECONDS, 0)
+            ->willReturn(null);
+
+        $this->assertFalse($this->mysqlBroker->peek());
+    }
+
+    public function testANonPositiveLeaseFallsBackToTheDefault(): void
+    {
+        $this->configureQueue(['leaseSeconds' => '0']);
 
         $this->queueMessageRepository->expects($this->once())
             ->method('claim')
@@ -212,16 +227,18 @@ class MysqlBrokerTest extends TestCase
     }
 
     /**
-     * @param array<string, string> $attributes extra <ceQueue> attributes for the test queue
+     * @param array<string, string> $attributes <ceQueue> attributes declared for the test queue
      */
     private function configureQueue(array $attributes): void
     {
-        $this->queueConfig->method('get')
-            ->with('queues', [])
-            ->willReturn([
-                ['name' => 'other_queue', 'broker' => 'mysql', 'leaseSeconds' => '5', 'maxRetries' => '99'],
-                array_merge(['name' => self::QUEUE_NAME, 'broker' => 'mysql'], $attributes),
-            ]);
+        $declared = [
+            'other_queue' => ['leaseSeconds' => '5', 'maxRetries' => '99'],
+            self::QUEUE_NAME => $attributes,
+        ];
+        $this->queueConfig->method('getQueueAttribute')
+            ->willReturnCallback(
+                static fn (string $queue, string $attribute): ?string => $declared[$queue][$attribute] ?? null
+            );
     }
 
     private function claimedEnvelope(): MessageEnvelope
