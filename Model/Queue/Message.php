@@ -6,10 +6,6 @@ use Magento\Framework\Model\AbstractModel;
 use Rcason\MqMysql\Api\Data\QueueMessageInterface;
 use Rcason\MqMysql\Model\ResourceModel\Queue\Message as ResourceModel;
 
-/**
- * @SuppressWarnings(PHPMD.CamelCasePropertyName)
- * @SuppressWarnings(PHPMD.CamelCaseMethodName)
- */
 class Message extends AbstractModel
     implements QueueMessageInterface
 {
@@ -142,6 +138,40 @@ class Message extends AbstractModel
     public function setRunTaskAt($runTaskAt)
     {
         $this->setData(QueueMessageInterface::RUN_TASK_AT, $runTaskAt);
+        return $this;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getLockedBy()
+    {
+        return $this->getData(QueueMessageInterface::LOCKED_BY);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function setLockedBy($lockedBy)
+    {
+        $this->setData(QueueMessageInterface::LOCKED_BY, $lockedBy);
+        return $this;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getLockedUntil()
+    {
+        return $this->getData(QueueMessageInterface::LOCKED_UNTIL);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function setLockedUntil($lockedUntil)
+    {
+        $this->setData(QueueMessageInterface::LOCKED_UNTIL, $lockedUntil);
         return $this;
     }
 }

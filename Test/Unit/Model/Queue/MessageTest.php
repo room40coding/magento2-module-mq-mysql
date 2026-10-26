@@ -23,7 +23,7 @@ class MessageTest extends \PHPUnit\Framework\TestCase
     /**
      * @inheritdoc
      */
-    protected function setUp()
+    protected function setUp(): void
     {
         $objectManager = new ObjectManager($this);
         $this->message = $objectManager->getObject(Message::class);
@@ -112,5 +112,19 @@ class MessageTest extends \PHPUnit\Framework\TestCase
             $this->message->getMessageContent(),
             self::VALUE_MESSAGE_CONTENT
         );
+    }
+
+    public function testLockedBy()
+    {
+        $this->message->setLockedBy('host:1:abcdef012345');
+        $this->assertEquals('host:1:abcdef012345', $this->message->getLockedBy());
+        $this->assertEquals('host:1:abcdef012345', $this->message->getData(QueueMessageInterface::LOCKED_BY));
+    }
+
+    public function testLockedUntil()
+    {
+        $this->message->setLockedUntil('2026-10-26 05:00:00');
+        $this->assertEquals('2026-10-26 05:00:00', $this->message->getLockedUntil());
+        $this->assertEquals('2026-10-26 05:00:00', $this->message->getData(QueueMessageInterface::LOCKED_UNTIL));
     }
 }
